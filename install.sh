@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-REPO_URL="${1:-https://raw.githubusercontent.com/pcwizz07-bot/job-platform/main}"
+REPO_URL="${1:-https://raw.githubusercontent.com/pcwizz07-bot/Job-platform/main}"
 APP_DIR="/opt/job-platform"
 
 echo "=== Job Platform Installer for Rocky Linux ==="
