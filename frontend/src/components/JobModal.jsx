@@ -26,12 +26,20 @@ export default function JobModal({ job, onSave, onClose }) {
     if (!title.trim()) return alert('Title is required')
     setBusy(true)
     try {
-      if (isNew) {
-        const res = await api.createJob({ title, description, status, priority, client_id: client_id || null, technician_id: technician_id || null, scheduled_date: scheduled_date || null, due_date: due_date || null, notes })
-        onSave(res.id, { title, description, status, priority, client_id, technician_id, scheduled_date, due_date, notes })
-      } else {
-        await onSave(job.id, { title, description, status, priority, client_id: client_id || null, technician_id: technician_id || null, scheduled_date: scheduled_date || null, due_date: due_date || null, notes })
+      const data = {
+        title, description, status, priority,
+        client_id: client_id || null,
+        technician_id: technician_id || null,
+        scheduled_date: scheduled_date || null,
+        due_date: due_date || null,
+        notes
       }
+      if (isNew) {
+        await api.createJob(data)
+      } else {
+        await api.updateJob(job.id, data)
+      }
+      onSave()
     } catch (err) {
       alert(err.message)
     }

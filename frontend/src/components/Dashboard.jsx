@@ -28,14 +28,9 @@ export default function Dashboard({ user, onLogout }) {
     return () => clearInterval(interval);
   }, [isViewer]);
 
-  const handleUpdate = async (id, updates) => {
-    try {
-      await api.updateJob(id, updates)
-      setEditJob(null)
-      load()
-    } catch (err) {
-      alert(err.message)
-    }
+  const handleModalSave = () => {
+    setEditJob(null)
+    load()
   }
 
   const handleDelete = async (id) => {
@@ -180,7 +175,7 @@ export default function Dashboard({ user, onLogout }) {
       {editJob && (
         <JobModal
           job={editJob}
-          onSave={(id, data) => handleUpdate(id, data)}
+          onSave={() => { setEditJob(null); load() }}
           onClose={() => setEditJob(null)}
         />
       )}

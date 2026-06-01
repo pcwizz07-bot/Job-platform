@@ -19,9 +19,7 @@ export default function Jobs({ user }) {
 
   useEffect(() => { load() }, [filter])
 
-  const handleSave = async (id, data) => {
-    if (!id) return
-    await api.updateJob(id, data)
+  const handleModalSave = () => {
     setEditJob(null)
     load()
   }
@@ -94,7 +92,7 @@ export default function Jobs({ user }) {
       {editJob && (
         <JobModal
           job={editJob}
-          onSave={handleSave}
+          onSave={handleModalSave}
           onClose={() => setEditJob(null)}
         />
       )}
