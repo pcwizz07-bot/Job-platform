@@ -4,13 +4,13 @@ WORKDIR /app
 
 # Install frontend deps & build
 COPY frontend/package*.json frontend/
-RUN cd frontend && npm ci
+RUN cd frontend && npm install
 COPY frontend/ frontend/
 RUN cd frontend && npm run build
 
 # Backend deps
 COPY backend/package*.json backend/
-RUN cd backend && npm ci --omit=dev
+RUN cd backend && npm install --omit=dev
 
 # Runtime stage
 FROM node:20-alpine
