@@ -48,6 +48,9 @@ SERVICE
 systemctl daemon-reload
 systemctl enable --now job-platform
 
+# Remove conflicting default nginx configs
+rm -f /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/ssl.conf
+
 # Nginx reverse proxy
 cat > /etc/nginx/conf.d/job-platform.conf <<NGINX
 server {
@@ -70,7 +73,7 @@ server {
 }
 NGINX
 
-nginx -t && systemctl enable nginx && systemctl start nginx
+nginx -t && systemctl enable nginx && systemctl start nginx || true
 
 # Seed admin user
 sleep 3

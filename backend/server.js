@@ -5,7 +5,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const speakeasy = require('speakeasy');
 const qrcode = require('qrcode');
-const Database = require('better-sqlite3');
+const initSqlJs = require('sql.js');
 const path = require('path');
 const fs = require('fs');
 
@@ -13,58 +13,110 @@ const fs = require('fs');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
+const DB_PATH = process.env.DB_PATH || './data/jobs.db';
 
 app.use(cors());
 app.use(express.json());
 
 // Ensure data dir
-const dbDir = path.dirname(process.env.DB_PATH || './data/jobs.db');
+const dbDir = path.dirname(DB_PATH);
 if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
 
-const db = new Database(process.env.DB_PATH || './data/jobs.db');
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+let db;
 
-// --- Database Schema ---
-db.exec(`
-  CREATE TABLE IF NOT EXISTS clients (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    email TEXT,
-    phone TEXT,
-    address TEXT,
-    notes TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
-  );
+// Helper: load/save database
+function dbAll(sql, params = []) {
+  const stmt = db.prepare(sql);
+  const rows = [];
+  while (stmt.step()) {
+    rows.push(stmt.getAsObject(params));
+  }
+  stmt.free();
+  return rows;
+}
 
-  CREATE TABLE IF NOT EXISTS technicians (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL,
-    phone TEXT,
-    role TEXT DEFAULT 'tech',
-    totp_secret TEXT,
-    totp_enabled INTEGER DEFAULT 0,
-    active INTEGER DEFAULT 1,
-    created_at TEXT DEFAULT (datetime('now'))
-  );
+function dbGet(sql, params = []) {
+  const stmt = db.prepare(sql);
+  if (stmt.step()) {
+    const row = stmt.getAsObject(params);
+    stmt.free();
+    return row;
+  }
+  stmt.free();
+  return null;
+}
 
-  CREATE TABLE IF NOT EXISTS jobs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT NOT NULL,
-    description TEXT,
-    client_id INTEGER REFERENCES clients(id),
-    technician_id INTEGER REFERENCES technicians(id),
-    status TEXT NOT NULL DEFAULT 'upcoming' CHECK(status IN ('upcoming','ongoing','outstanding','completed')),
-    priority TEXT DEFAULT 'normal' CHECK(priority IN ('low','normal','high','urgent')),
-    scheduled_date TEXT,
-    due_date TEXT,
-    notes TEXT,
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
-  );
-`);
+function dbRun(sql, params = []) {
+  db.run(sql, params);
+  saveDb();
+}
+
+function dbExec(sql) {
+  db.exec(sql);
+  saveDb();
+}
+
+function saveDb() {
+  const data = db.export();
+  const buffer = Buffer.from(data);
+  fs.writeFileSync(DB_PATH, buffer);
+}
+
+function getLastId() {
+  const row = dbGet('SELECT last_insert_rowid() as id');
+  return row ? row.id : null;
+}
+
+async function initDb() {
+  const SQL = await initSqlJs();
+  
+  if (fs.existsSync(DB_PATH)) {
+    const fileBuffer = fs.readFileSync(DB_PATH);
+    db = new SQL.Database(fileBuffer);
+  } else {
+    db = new SQL.Database();
+  }
+
+  dbExec(`
+    CREATE TABLE IF NOT EXISTS clients (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      email TEXT,
+      phone TEXT,
+      address TEXT,
+      notes TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS technicians (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      email TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      phone TEXT,
+      role TEXT DEFAULT 'tech',
+      totp_secret TEXT,
+      totp_enabled INTEGER DEFAULT 0,
+      active INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      description TEXT,
+      client_id INTEGER REFERENCES clients(id),
+      technician_id INTEGER REFERENCES technicians(id),
+      status TEXT NOT NULL DEFAULT 'upcoming' CHECK(status IN ('upcoming','ongoing','outstanding','completed')),
+      priority TEXT DEFAULT 'normal' CHECK(priority IN ('low','normal','high','urgent')),
+      scheduled_date TEXT,
+      due_date TEXT,
+      notes TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+  `);
+}
 
 // --- Auth Middleware ---
 function authMiddleware(req, res, next) {
@@ -90,12 +142,12 @@ function adminOnly(req, res, next) {
 
 // Admin seed (first run)
 app.post('/api/seed', async (req, res) => {
-  const existing = db.prepare('SELECT id FROM technicians WHERE role = ?').get('admin');
+  const existing = dbGet("SELECT id FROM technicians WHERE role = 'admin'");
   if (existing) return res.json({ message: 'Already seeded' });
 
   const hash = await bcrypt.hash('admin123', 10);
-  db.prepare('INSERT INTO technicians (name, email, password, role, totp_enabled) VALUES (?, ?, ?, ?, ?)')
-    .run('Admin', 'admin@platform.com', hash, 'admin', 0);
+  dbRun("INSERT INTO technicians (name, email, password, role, totp_enabled) VALUES (?, ?, ?, 'admin', 0)", 
+    ['Admin', 'admin@platform.com', hash]);
   res.json({ message: 'Admin created — email: admin@platform.com, password: admin123' });
 });
 
@@ -104,13 +156,12 @@ app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
 
-  const tech = db.prepare('SELECT * FROM technicians WHERE email = ? AND active = 1').get(email);
+  const tech = dbGet('SELECT * FROM technicians WHERE email = ? AND active = 1', [email]);
   if (!tech) return res.status(401).json({ error: 'Invalid credentials' });
 
   const match = await bcrypt.compare(password, tech.password);
   if (!match) return res.status(401).json({ error: 'Invalid credentials' });
 
-  // Check if TOTP is enabled
   if (tech.totp_enabled) {
     return res.json({ requires_2fa: true, temp_token: jwt.sign({ id: tech.id, step: '2fa' }, JWT_SECRET, { expiresIn: '5m' }) });
   }
@@ -128,7 +179,7 @@ app.post('/api/auth/verify-2fa', (req, res) => {
     const decoded = jwt.verify(temp_token, JWT_SECRET);
     if (decoded.step !== '2fa') return res.status(400).json({ error: 'Invalid token' });
 
-    const tech = db.prepare('SELECT * FROM technicians WHERE id = ?').get(decoded.id);
+    const tech = dbGet('SELECT * FROM technicians WHERE id = ?', [decoded.id]);
     if (!tech || !tech.totp_secret) return res.status(400).json({ error: '2FA not set up' });
 
     const verified = speakeasy.totp.verify({
@@ -147,40 +198,40 @@ app.post('/api/auth/verify-2fa', (req, res) => {
   }
 });
 
-// Setup 2FA (admin only)
+// Setup 2FA
 app.post('/api/technicians/:id/setup-2fa', authMiddleware, adminOnly, async (req, res) => {
-  const tech = db.prepare('SELECT * FROM technicians WHERE id = ?').get(req.params.id);
+  const tech = dbGet('SELECT * FROM technicians WHERE id = ?', [req.params.id]);
   if (!tech) return res.status(404).json({ error: 'Technician not found' });
 
   const secret = speakeasy.generateSecret({ name: `JobPlatform:${tech.email}` });
-  db.prepare('UPDATE technicians SET totp_secret = ? WHERE id = ?').run(secret.base32, tech.id);
+  dbRun('UPDATE technicians SET totp_secret = ? WHERE id = ?', [secret.base32, tech.id]);
 
   const qr = await qrcode.toDataURL(secret.otpauth_url);
   res.json({ secret: secret.base32, qr });
 });
 
-// Enable 2FA (after verified)
+// Enable 2FA
 app.post('/api/technicians/:id/enable-2fa', authMiddleware, adminOnly, (req, res) => {
   const { code } = req.body;
-  const tech = db.prepare('SELECT * FROM technicians WHERE id = ?').get(req.params.id);
+  const tech = dbGet('SELECT * FROM technicians WHERE id = ?', [req.params.id]);
   if (!tech || !tech.totp_secret) return res.status(400).json({ error: '2FA not set up yet' });
 
   const verified = speakeasy.totp.verify({ secret: tech.totp_secret, encoding: 'base32', token: code, window: 1 });
   if (!verified) return res.status(400).json({ error: 'Invalid code' });
 
-  db.prepare('UPDATE technicians SET totp_enabled = 1 WHERE id = ?').run(tech.id);
+  dbRun('UPDATE technicians SET totp_enabled = 1 WHERE id = ?', [tech.id]);
   res.json({ message: '2FA enabled' });
 });
 
 // Disable 2FA
 app.post('/api/technicians/:id/disable-2fa', authMiddleware, adminOnly, (req, res) => {
-  db.prepare('UPDATE technicians SET totp_secret = NULL, totp_enabled = 0 WHERE id = ?').run(req.params.id);
+  dbRun('UPDATE technicians SET totp_secret = NULL, totp_enabled = 0 WHERE id = ?', [req.params.id]);
   res.json({ message: '2FA disabled' });
 });
 
-// --- Technician CRUD (Admin) ---
+// --- Technician CRUD ---
 app.get('/api/technicians', authMiddleware, adminOnly, (req, res) => {
-  const techs = db.prepare('SELECT id, name, email, phone, totp_enabled, active, created_at FROM technicians ORDER BY name').all();
+  const techs = dbAll('SELECT id, name, email, phone, totp_enabled, active, created_at FROM technicians ORDER BY name');
   res.json(techs);
 });
 
@@ -188,50 +239,44 @@ app.post('/api/technicians', authMiddleware, adminOnly, async (req, res) => {
   const { name, email, password, phone } = req.body;
   if (!name || !email || !password) return res.status(400).json({ error: 'Name, email, password required' });
 
-  const exists = db.prepare('SELECT id FROM technicians WHERE email = ?').get(email);
+  const exists = dbGet('SELECT id FROM technicians WHERE email = ?', [email]);
   if (exists) return res.status(400).json({ error: 'Email already exists' });
 
   const hash = await bcrypt.hash(password, 10);
-  const result = db.prepare('INSERT INTO technicians (name, email, password, phone) VALUES (?, ?, ?, ?)').run(name, email, hash, phone || null);
-  res.json({ id: result.lastInsertRowid, name, email });
+  dbRun('INSERT INTO technicians (name, email, password, phone) VALUES (?, ?, ?, ?)', [name, email, hash, phone || null]);
+  res.json({ id: getLastId(), name, email });
 });
 
 app.put('/api/technicians/:id', authMiddleware, adminOnly, async (req, res) => {
   const { name, email, password, phone, active } = req.body;
-  const tech = db.prepare('SELECT id FROM technicians WHERE id = ?').get(req.params.id);
+  const tech = dbGet('SELECT id FROM technicians WHERE id = ?', [req.params.id]);
   if (!tech) return res.status(404).json({ error: 'Not found' });
 
-  const updates = [];
-  const params = [];
+  const updates = []; const params = [];
   if (name) { updates.push('name = ?'); params.push(name); }
   if (email) { updates.push('email = ?'); params.push(email); }
   if (phone !== undefined) { updates.push('phone = ?'); params.push(phone); }
   if (active !== undefined) { updates.push('active = ?'); params.push(active ? 1 : 0); }
-  if (password) {
-    const hash = await bcrypt.hash(password, 10);
-    updates.push('password = ?');
-    params.push(hash);
-  }
+  if (password) { const h = await bcrypt.hash(password, 10); updates.push('password = ?'); params.push(h); }
   if (updates.length) {
     params.push(req.params.id);
-    db.prepare(`UPDATE technicians SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+    dbRun(`UPDATE technicians SET ${updates.join(', ')} WHERE id = ?`, params);
   }
   res.json({ message: 'Updated' });
 });
 
 app.delete('/api/technicians/:id', authMiddleware, adminOnly, (req, res) => {
-  db.prepare('DELETE FROM technicians WHERE id = ? AND role IS NULL').run(req.params.id);
+  dbRun('DELETE FROM technicians WHERE id = ? AND role IS NULL', [req.params.id]);
   res.json({ message: 'Deleted' });
 });
 
 // --- Client CRUD ---
 app.get('/api/clients', authMiddleware, (req, res) => {
-  const clients = db.prepare('SELECT * FROM clients ORDER BY name').all();
-  res.json(clients);
+  res.json(dbAll('SELECT * FROM clients ORDER BY name'));
 });
 
 app.get('/api/clients/:id', authMiddleware, (req, res) => {
-  const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(req.params.id);
+  const client = dbGet('SELECT * FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
   res.json(client);
 });
@@ -239,31 +284,27 @@ app.get('/api/clients/:id', authMiddleware, (req, res) => {
 app.post('/api/clients', authMiddleware, (req, res) => {
   const { name, email, phone, address, notes } = req.body;
   if (!name) return res.status(400).json({ error: 'Name required' });
-  const result = db.prepare('INSERT INTO clients (name, email, phone, address, notes) VALUES (?, ?, ?, ?, ?)')
-    .run(name, email || null, phone || null, address || null, notes || null);
-  res.json({ id: result.lastInsertRowid, name });
+  dbRun('INSERT INTO clients (name, email, phone, address, notes) VALUES (?, ?, ?, ?, ?)',
+    [name, email || null, phone || null, address || null, notes || null]);
+  res.json({ id: getLastId(), name });
 });
 
 app.put('/api/clients/:id', authMiddleware, (req, res) => {
   const { name, email, phone, address, notes } = req.body;
-  const client = db.prepare('SELECT id FROM clients WHERE id = ?').get(req.params.id);
+  const client = dbGet('SELECT id FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
-
   const updates = []; const params = [];
   if (name) { updates.push('name = ?'); params.push(name); }
   if (email !== undefined) { updates.push('email = ?'); params.push(email); }
   if (phone !== undefined) { updates.push('phone = ?'); params.push(phone); }
   if (address !== undefined) { updates.push('address = ?'); params.push(address); }
   if (notes !== undefined) { updates.push('notes = ?'); params.push(notes); }
-  if (updates.length) {
-    params.push(req.params.id);
-    db.prepare(`UPDATE clients SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  }
+  if (updates.length) { params.push(req.params.id); dbRun(`UPDATE clients SET ${updates.join(', ')} WHERE id = ?`, params); }
   res.json({ message: 'Updated' });
 });
 
 app.delete('/api/clients/:id', authMiddleware, (req, res) => {
-  db.prepare('DELETE FROM clients WHERE id = ?').run(req.params.id);
+  dbRun('DELETE FROM clients WHERE id = ?', [req.params.id]);
   res.json({ message: 'Deleted' });
 });
 
@@ -288,18 +329,17 @@ app.get('/api/jobs', authMiddleware, (req, res) => {
   }
 
   query += ' ORDER BY j.updated_at DESC';
-  const jobs = db.prepare(query).all(...params);
-  res.json(jobs);
+  res.json(dbAll(query, params));
 });
 
 app.get('/api/jobs/:id', authMiddleware, (req, res) => {
-  const job = db.prepare(`
+  const job = dbGet(`
     SELECT j.*, c.name as client_name, t.name as technician_name, t.email as technician_email
     FROM jobs j
     LEFT JOIN clients c ON j.client_id = c.id
     LEFT JOIN technicians t ON j.technician_id = t.id
     WHERE j.id = ?
-  `).get(req.params.id);
+  `, [req.params.id]);
   if (!job) return res.status(404).json({ error: 'Not found' });
   res.json(job);
 });
@@ -307,23 +347,16 @@ app.get('/api/jobs/:id', authMiddleware, (req, res) => {
 app.post('/api/jobs', authMiddleware, (req, res) => {
   const { title, description, client_id, technician_id, status, priority, scheduled_date, due_date, notes } = req.body;
   if (!title) return res.status(400).json({ error: 'Title required' });
-
-  const result = db.prepare(`
-    INSERT INTO jobs (title, description, client_id, technician_id, status, priority, scheduled_date, due_date, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    title, description || null,
-    client_id || null, technician_id || null,
-    status || 'upcoming', priority || 'normal',
-    scheduled_date || null, due_date || null, notes || null
-  );
-  res.json({ id: result.lastInsertRowid, title });
+  dbRun(`INSERT INTO jobs (title, description, client_id, technician_id, status, priority, scheduled_date, due_date, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [title, description || null, client_id || null, technician_id || null,
+     status || 'upcoming', priority || 'normal', scheduled_date || null, due_date || null, notes || null]);
+  res.json({ id: getLastId(), title });
 });
 
 app.put('/api/jobs/:id', authMiddleware, (req, res) => {
-  const job = db.prepare('SELECT id FROM jobs WHERE id = ?').get(req.params.id);
+  const job = dbGet('SELECT id FROM jobs WHERE id = ?', [req.params.id]);
   if (!job) return res.status(404).json({ error: 'Not found' });
-
   const { title, description, client_id, technician_id, status, priority, scheduled_date, due_date, notes } = req.body;
   const updates = []; const params = [];
   if (title) { updates.push('title = ?'); params.push(title); }
@@ -336,16 +369,12 @@ app.put('/api/jobs/:id', authMiddleware, (req, res) => {
   if (due_date !== undefined) { updates.push('due_date = ?'); params.push(due_date); }
   if (notes !== undefined) { updates.push('notes = ?'); params.push(notes); }
   updates.push("updated_at = datetime('now')");
-
-  if (updates.length > 1) {
-    params.push(req.params.id);
-    db.prepare(`UPDATE jobs SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  }
+  if (updates.length > 1) { params.push(req.params.id); dbRun(`UPDATE jobs SET ${updates.join(', ')} WHERE id = ?`, params); }
   res.json({ message: 'Updated' });
 });
 
 app.delete('/api/jobs/:id', authMiddleware, (req, res) => {
-  db.prepare('DELETE FROM jobs WHERE id = ?').run(req.params.id);
+  dbRun('DELETE FROM jobs WHERE id = ?', [req.params.id]);
   res.json({ message: 'Deleted' });
 });
 
@@ -360,7 +389,7 @@ app.get('/api/dashboard', authMiddleware, (req, res) => {
     params.push(techId);
   }
 
-  const stats = db.prepare(`
+  const stats = dbGet(`
     SELECT
       COUNT(*) as total,
       SUM(CASE WHEN j.status = 'ongoing' THEN 1 ELSE 0 END) as ongoing,
@@ -368,9 +397,9 @@ app.get('/api/dashboard', authMiddleware, (req, res) => {
       SUM(CASE WHEN j.status = 'outstanding' THEN 1 ELSE 0 END) as outstanding,
       SUM(CASE WHEN j.status = 'completed' THEN 1 ELSE 0 END) as completed
     FROM jobs j ${whereClause}
-  `).get(...params);
+  `, params) || { total: 0, ongoing: 0, upcoming: 0, outstanding: 0, completed: 0 };
 
-  const jobs = db.prepare(`
+  const jobs = dbAll(`
     SELECT j.id, j.title, j.status, j.priority, j.scheduled_date, j.due_date,
            c.name as client_name, t.name as technician_name, t.email as technician_email
     FROM jobs j
@@ -378,7 +407,7 @@ app.get('/api/dashboard', authMiddleware, (req, res) => {
     LEFT JOIN technicians t ON j.technician_id = t.id
     ${whereClause ? whereClause + ' AND' : 'WHERE'} j.status IN ('ongoing', 'upcoming', 'outstanding')
     ORDER BY j.updated_at DESC
-  `).all(...params);
+  `, params);
 
   res.json({ stats, jobs });
 });
@@ -395,6 +424,11 @@ if (fs.existsSync(frontendPath)) {
 }
 
 // --- Start ---
-app.listen(PORT, () => {
-  console.log(`Job Platform API running on http://localhost:${PORT}`);
-});
+async function start() {
+  await initDb();
+  app.listen(PORT, () => {
+    console.log(`Job Platform API running on http://localhost:${PORT}`);
+  });
+}
+
+start();
