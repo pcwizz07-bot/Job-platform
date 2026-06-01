@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -e
-REPO_URL="${1:-https://raw.githubusercontent.com/pcwizz07-bot/Job-platform/main}"
-DOMAIN="${2:-bespokeuisp.dedicated.co.za}"
+DOMAIN="${1:-bespokeuisp.dedicated.co.za}"
 APP_DIR="/opt/job-platform"
 
 echo "=== Job Platform Installer for Rocky Linux ==="
+echo "Domain: $DOMAIN"
 
 # Root check
 [[ $EUID -eq 0 ]] || { echo "Run as root: sudo bash install.sh"; exit 1; }
@@ -12,30 +12,19 @@ echo "=== Job Platform Installer for Rocky Linux ==="
 # Install deps (build tools for native modules)
 dnf install -y nodejs git curl nginx certbot python3-certbot-nginx make gcc gcc-c++ python3-devel --allowerasing
 
-# Create app dir
-mkdir -p $APP_DIR
-cd $APP_DIR
+# Clone the project
+echo "Downloading project..."
+rm -rf "$APP_DIR"
+git clone https://github.com/pcwizz07-bot/Job-platform.git "$APP_DIR"
+cd "$APP_DIR"
 
-# Download backend
-curl -sL "$REPO_URL/backend/package.json" -o backend/package.json
-curl -sL "$REPO_URL/backend/server.js" -o backend/server.js
-curl -sL "$REPO_URL/backend/.env" -o backend/.env
+# Install & build backend
+echo "Installing backend..."
+cd "$APP_DIR/backend" && npm install
 
-# Download frontend
-for f in package.json vite.config.js index.html; do
-  curl -sL "$REPO_URL/frontend/$f" -o "frontend/$f"
-done
-mkdir -p frontend/src frontend/src/components
-for f in main.jsx App.jsx index.css api.js; do
-  curl -sL "$REPO_URL/frontend/src/$f" -o "frontend/src/$f"
-done
-for f in Sidebar Login Dashboard JobModal Jobs Clients Technicians; do
-  curl -sL "$REPO_URL/frontend/src/components/${f}.jsx" -o "frontend/src/components/${f}.jsx"
-done
-
-# Install & build
-cd $APP_DIR/backend && npm install
-cd $APP_DIR/frontend && npm install && npm run build
+# Install & build frontend
+echo "Installing frontend..."
+cd "$APP_DIR/frontend" && npm install && npm run build
 
 # Create systemd service
 cat > /etc/systemd/system/job-platform.service <<'SERVICE'
@@ -81,16 +70,18 @@ server {
 }
 NGINX
 
-nginx -t && systemctl reload nginx || systemctl restart nginx
+nginx -t && systemctl enable nginx && systemctl start nginx
 
 # Seed admin user
-sleep 2
+sleep 3
+echo "Seeding admin user..."
 curl -s -X POST http://localhost:3000/api/seed
 
 echo ""
 echo "=== DONE ==="
+echo "Open http://${DOMAIN} in your browser"
 echo "Admin: email=admin@platform.com  password=admin123"
 echo ""
-echo "Get SSL with:"
+echo "For SSL run:"
 echo "  certbot --nginx -d ${DOMAIN}"
 echo ""
