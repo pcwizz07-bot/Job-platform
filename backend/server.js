@@ -27,9 +27,10 @@ let db;
 // Helper: load/save database
 function dbAll(sql, params = []) {
   const stmt = db.prepare(sql);
+  if (params.length) stmt.bind(params);
   const rows = [];
   while (stmt.step()) {
-    rows.push(stmt.getAsObject(params));
+    rows.push(stmt.getAsObject());
   }
   stmt.free();
   return rows;
@@ -37,8 +38,9 @@ function dbAll(sql, params = []) {
 
 function dbGet(sql, params = []) {
   const stmt = db.prepare(sql);
+  if (params.length) stmt.bind(params);
   if (stmt.step()) {
-    const row = stmt.getAsObject(params);
+    const row = stmt.getAsObject();
     stmt.free();
     return row;
   }
