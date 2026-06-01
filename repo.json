@@ -1,0 +1,5 @@
+{
+  "name": "job-platform",
+  "description": "Job management platform - manage jobs, clients, technicians with 2FA",
+  "private": false
+}
