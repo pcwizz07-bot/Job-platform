@@ -140,6 +140,11 @@ function adminOnly(req, res, next) {
   next();
 }
 
+function adminOrTechOnly(req, res, next) {
+  if (req.user.role === 'viewer') return res.status(403).json({ error: 'Viewer is read-only' });
+  next();
+}
+
 // --- Auth Routes ---
 
 // Admin seed (first run)
@@ -148,9 +153,12 @@ app.post('/api/seed', async (req, res) => {
   if (existing) return res.json({ message: 'Already seeded' });
 
   const hash = await bcrypt.hash('admin123', 10);
+  const viewHash = await bcrypt.hash('view123', 10);
   dbRun("INSERT INTO technicians (name, email, password, role, totp_enabled) VALUES (?, ?, ?, 'admin', 0)", 
     ['Admin', 'admin@platform.com', hash]);
-  res.json({ message: 'Admin created — email: admin@platform.com, password: admin123' });
+  dbRun("INSERT INTO technicians (name, email, password, role, totp_enabled) VALUES (?, ?, ?, 'viewer', 0)", 
+    ['Display TV', 'tv@platform.com', viewHash]);
+  res.json({ message: 'Admin (admin@platform.com) and Viewer (tv@platform.com) created' });
 });
 
 // Technician login
@@ -283,7 +291,7 @@ app.get('/api/clients/:id', authMiddleware, (req, res) => {
   res.json(client);
 });
 
-app.post('/api/clients', authMiddleware, (req, res) => {
+app.post('/api/clients', authMiddleware, adminOrTechOnly, (req, res) => {
   const { name, email, phone, address, notes } = req.body;
   if (!name) return res.status(400).json({ error: 'Name required' });
   dbRun('INSERT INTO clients (name, email, phone, address, notes) VALUES (?, ?, ?, ?, ?)',
@@ -291,7 +299,7 @@ app.post('/api/clients', authMiddleware, (req, res) => {
   res.json({ id: getLastId(), name });
 });
 
-app.put('/api/clients/:id', authMiddleware, (req, res) => {
+app.put('/api/clients/:id', authMiddleware, adminOrTechOnly, (req, res) => {
   const { name, email, phone, address, notes } = req.body;
   const client = dbGet('SELECT id FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
@@ -305,7 +313,7 @@ app.put('/api/clients/:id', authMiddleware, (req, res) => {
   res.json({ message: 'Updated' });
 });
 
-app.delete('/api/clients/:id', authMiddleware, (req, res) => {
+app.delete('/api/clients/:id', authMiddleware, adminOrTechOnly, (req, res) => {
   dbRun('DELETE FROM clients WHERE id = ?', [req.params.id]);
   res.json({ message: 'Deleted' });
 });
@@ -346,7 +354,7 @@ app.get('/api/jobs/:id', authMiddleware, (req, res) => {
   res.json(job);
 });
 
-app.post('/api/jobs', authMiddleware, (req, res) => {
+app.post('/api/jobs', authMiddleware, adminOrTechOnly, (req, res) => {
   const { title, description, client_id, technician_id, status, priority, scheduled_date, due_date, notes } = req.body;
   if (!title) return res.status(400).json({ error: 'Title required' });
   dbRun(`INSERT INTO jobs (title, description, client_id, technician_id, status, priority, scheduled_date, due_date, notes)
@@ -356,7 +364,7 @@ app.post('/api/jobs', authMiddleware, (req, res) => {
   res.json({ id: getLastId(), title });
 });
 
-app.put('/api/jobs/:id', authMiddleware, (req, res) => {
+app.put('/api/jobs/:id', authMiddleware, adminOrTechOnly, (req, res) => {
   const job = dbGet('SELECT id FROM jobs WHERE id = ?', [req.params.id]);
   if (!job) return res.status(404).json({ error: 'Not found' });
   const { title, description, client_id, technician_id, status, priority, scheduled_date, due_date, notes } = req.body;
@@ -375,7 +383,7 @@ app.put('/api/jobs/:id', authMiddleware, (req, res) => {
   res.json({ message: 'Updated' });
 });
 
-app.delete('/api/jobs/:id', authMiddleware, (req, res) => {
+app.delete('/api/jobs/:id', authMiddleware, adminOrTechOnly, (req, res) => {
   dbRun('DELETE FROM jobs WHERE id = ?', [req.params.id]);
   res.json({ message: 'Deleted' });
 });

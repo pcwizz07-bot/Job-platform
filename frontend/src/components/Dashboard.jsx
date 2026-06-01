@@ -7,6 +7,7 @@ export default function Dashboard({ user }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [editJob, setEditJob] = useState(null)
+  const isViewer = user.role === 'viewer'
 
   const load = async () => {
     try {
@@ -19,6 +20,13 @@ export default function Dashboard({ user }) {
   }
 
   useEffect(() => { load() }, [])
+
+  // Auto-refresh every 30s for TV display
+  useEffect(() => {
+    if (!isViewer) return;
+    const interval = setInterval(load, 30000);
+    return () => clearInterval(interval);
+  }, [isViewer]);
 
   const handleUpdate = async (id, updates) => {
     try {
@@ -76,19 +84,20 @@ export default function Dashboard({ user }) {
 
       {jobs.length === 0 ? (
         <div className="empty">
-          <p style={{ fontSize: 18, marginBottom: 8 }}>No active jobs</p>
-          <p>Create a new job to get started.</p>
+          <p style={{ fontSize: isViewer ? 28 : 18, marginBottom: 8 }}>No active jobs</p>
+          <p style={{ fontSize: isViewer ? 18 : 14 }}>Create a new job to get started.</p>
         </div>
       ) : (
         <div>
           {jobs.map(job => (
             <div key={job.id} className={`job-card status-${job.status}`}
+                 style={isViewer ? { padding: '20px 24px', marginBottom: 12 } : {}}
                  onClick={() => user.role === 'admin' && setEditJob(job)}>
               <div className="job-info">
-                <div className="job-title">{job.title}</div>
-                <div className="job-meta">
-                  <span className={`badge ${job.status}`}>{job.status}</span>
-                  {job.priority !== 'normal' && <span className={`badge ${job.priority}`}>{job.priority}</span>}
+                <div className="job-title" style={isViewer ? { fontSize: 22 } : {}}>{job.title}</div>
+                <div className="job-meta" style={isViewer ? { fontSize: 16, gap: 16 } : {}}>
+                  <span className={`badge ${job.status}`} style={isViewer ? { fontSize: 14, padding: '4px 12px' } : {}}>{job.status}</span>
+                  {job.priority !== 'normal' && <span className={`badge ${job.priority}`} style={isViewer ? { fontSize: 14, padding: '4px 12px' } : {}}>{job.priority}</span>}
                   {job.client_name && <span>Client: {job.client_name}</span>}
                   {job.technician_name && <span>👤 {job.technician_name}</span>}
                   {job.due_date && <span>Due: {new Date(job.due_date).toLocaleDateString()}</span>}

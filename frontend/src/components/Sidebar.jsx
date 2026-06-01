@@ -3,6 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 
 export default function Sidebar({ user, onLogout }) {
   const isAdmin = user.role === 'admin'
+  const isViewer = user.role === 'viewer'
 
   return (
     <div className="sidebar">
@@ -11,9 +12,11 @@ export default function Sidebar({ user, onLogout }) {
         <NavLink to="/" end className={({ isActive }) => isActive ? 'active' : ''}>
           📊 <span>Dashboard</span>
         </NavLink>
-        <NavLink to="/jobs" className={({ isActive }) => isActive ? 'active' : ''}>
-          📋 <span>Jobs</span>
-        </NavLink>
+        {!isViewer && (
+          <NavLink to="/jobs" className={({ isActive }) => isActive ? 'active' : ''}>
+            📋 <span>Jobs</span>
+          </NavLink>
+        )}
         {isAdmin && (
           <>
             <NavLink to="/clients" className={({ isActive }) => isActive ? 'active' : ''}>
@@ -28,7 +31,9 @@ export default function Sidebar({ user, onLogout }) {
       <div className="user-info">
         <div className="name">{user.name}</div>
         <div className="email">{user.email}</div>
-        <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 2 }}>{isAdmin ? 'Admin' : 'Technician'}</div>
+        <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 2 }}>
+          {isAdmin ? 'Admin' : isViewer ? 'Viewer' : 'Technician'}
+        </div>
         <button onClick={onLogout} className="secondary">Logout</button>
       </div>
     </div>
