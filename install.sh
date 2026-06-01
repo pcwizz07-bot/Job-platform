@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -e
 REPO_URL="${1:-https://raw.githubusercontent.com/pcwizz07-bot/Job-platform/main}"
+DOMAIN="${2:-bespokeuisp.dedicated.co.za}"
 APP_DIR="/opt/job-platform"
 
 echo "=== Job Platform Installer for Rocky Linux ==="
@@ -8,8 +9,8 @@ echo "=== Job Platform Installer for Rocky Linux ==="
 # Root check
 [[ $EUID -eq 0 ]] || { echo "Run as root: sudo bash install.sh"; exit 1; }
 
-# Install deps
-dnf install -y nodejs npm git curl nginx certbot python3-certbot-nginx
+# Install deps (build tools for native modules)
+dnf install -y nodejs git curl nginx certbot python3-certbot-nginx make gcc gcc-c++ python3-devel --allowerasing
 
 # Create app dir
 mkdir -p $APP_DIR
@@ -59,23 +60,23 @@ systemctl daemon-reload
 systemctl enable --now job-platform
 
 # Nginx reverse proxy
-cat > /etc/nginx/conf.d/job-platform.conf <<'NGINX'
+cat > /etc/nginx/conf.d/job-platform.conf <<NGINX
 server {
     listen 80;
-    server_name _;
+    server_name ${DOMAIN};
 
     location /api {
         proxy_pass http://localhost:3000;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
     }
 
     location / {
         root /opt/job-platform/frontend/dist;
-        try_files $uri /index.html;
+        try_files \$uri /index.html;
     }
 }
 NGINX
@@ -90,7 +91,6 @@ echo ""
 echo "=== DONE ==="
 echo "Admin: email=admin@platform.com  password=admin123"
 echo ""
-echo "Set your domain and get SSL:"
-echo "  certbot --nginx -d yourdomain.com"
+echo "Get SSL with:"
+echo "  certbot --nginx -d ${DOMAIN}"
 echo ""
-echo "To update: cd $APP_DIR && bash <(curl -sL <REPO_URL>/install.sh)"
