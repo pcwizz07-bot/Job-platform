@@ -41,6 +41,12 @@ export default function App() {
   }
 
   const isAdmin = user.role === 'admin'
+  const isViewer = user.role === 'viewer'
+
+  // Viewers get full-screen dashboard, no sidebar
+  if (isViewer) {
+    return <Dashboard user={user} onLogout={handleLogout} />
+  }
 
   return (
     <div className="app-layout">
