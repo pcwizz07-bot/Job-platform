@@ -58,6 +58,10 @@ label { display: block; margin-bottom: 4px; font-size: 13px; color: var(--text2)
 .badge.urgent { background: #7c2d12; color: #f97316; }
 .badge.normal { background: #1e3a5f; color: var(--blue); }
 .badge.low { background: #14532d; color: var(--green); }
+.badge.admin { background: #4f46e5; color: #c7d2fe; }
+.badge.tech { background: #1e3a5f; color: var(--blue); }
+.badge.client { background: #5b0f0f; color: #fca5a5; }
+.badge.viewer { background: #1f2937; color: var(--text2); }
 .status-ongoing { border-left: 3px solid var(--ongoing); }
 .status-upcoming { border-left: 3px solid var(--upcoming); }
 .status-outstanding { border-left: 3px solid var(--outstanding); }
