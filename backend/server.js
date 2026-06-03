@@ -566,8 +566,47 @@ app.get('/api/client/my-company', authMiddleware, (req, res) => {
   res.json(dbGet('SELECT * FROM companies WHERE id = ?', [req.user.company_id]));
 });
 
+// --- Build APK endpoint (admin only) ---
+app.post('/api/build-apk', authMiddleware, adminOnly, (req, res) => {
+  const buildScript = path.join(__dirname, '..', 'build-apk.sh');
+  if (!fs.existsSync(buildScript)) {
+    return res.status(400).json({ error: 'Build script not found. Clone Job-platform-mobile repo first.' });
+  }
+  // Start build in background
+  const { exec } = require('child_process');
+  exec(`bash ${buildScript}`, { cwd: path.join(__dirname, '..') }, (error, stdout, stderr) => {
+    if (error) {
+      console.error('APK build error:', error.message);
+      return;
+    }
+    console.log('APK build output:', stdout);
+  });
+  res.json({ message: 'APK build started. Check /api/apk-info in a few minutes.' });
+});
+
 // --- Serve static ---
 const frontendPath = path.join(__dirname, '..', 'frontend', 'dist');
+const apkDir = path.join(__dirname, '..', 'apk');
+
+// Serve APK files if they exist
+if (fs.existsSync(apkDir)) {
+  app.use('/apk', express.static(apkDir));
+  app.get('/api/apk-info', (req, res) => {
+    const apkFiles = fs.existsSync(apkDir) ? fs.readdirSync(apkDir).filter(f => f.endsWith('.apk')) : [];
+    if (apkFiles.length === 0) return res.json({ available: false });
+    const latest = apkFiles.sort().reverse()[0];
+    const stats = fs.statSync(path.join(apkDir, latest));
+    res.json({
+      available: true,
+      filename: latest,
+      url: `/apk/${latest}`,
+      size: stats.size,
+      date: stats.mtime,
+    });
+  });
+} else {
+  app.get('/api/apk-info', (req, res) => res.json({ available: false }));
+}
 if (fs.existsSync(frontendPath)) {
   app.use(express.static(frontendPath));
   app.get('*', (req, res) => {

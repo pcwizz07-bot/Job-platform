@@ -8,6 +8,7 @@ import JobWorkflow from './components/JobWorkflow'
 import Companies from './components/Companies'
 import Users from './components/Users'
 import ClientPortal from './components/ClientPortal'
+import DownloadApp from './components/DownloadApp'
 import Sidebar from './components/Sidebar'
 
 export default function App() {
@@ -57,6 +58,7 @@ export default function App() {
           <Route path="/jobs/:id/workflow" element={<JobWorkflow user={user} />} />
           {isAdmin && <Route path="/companies" element={<Companies />} />}
           {isAdmin && <Route path="/users" element={<Users />} />}
+          {<Route path="/download" element={<DownloadApp user={user} />} />}
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </div>

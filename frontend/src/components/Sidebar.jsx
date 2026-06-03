@@ -1,5 +1,5 @@
 import React from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink } from 'react-router-dom'
 
 export default function Sidebar({ user, onLogout }) {
   const isAdmin = user.role === 'admin'
@@ -24,12 +24,15 @@ export default function Sidebar({ user, onLogout }) {
             </NavLink>
           </>
         )}
+        <NavLink to="/download" className={({ isActive }) => isActive ? 'active' : ''}>
+          📱 <span>Mobile App</span>
+        </NavLink>
       </nav>
       <div className="user-info">
         <div className="name">{user.name}</div>
         <div className="email">{user.email}</div>
         <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 2 }}>
-          {isAdmin ? 'Admin' : 'Technician'}
+          {isAdmin ? 'Admin' : user.role === 'tech' ? 'Technician' : user.role}
         </div>
         <button onClick={onLogout} className="secondary">Logout</button>
       </div>
